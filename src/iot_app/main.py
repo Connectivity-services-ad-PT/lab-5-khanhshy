@@ -1,17 +1,26 @@
 import os
 from datetime import datetime, timezone
 from enum import Enum
+from http import HTTPStatus
 from typing import Dict, List, Optional
 
+import psycopg
+import requests
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from psycopg.rows import dict_row
 
 # Đọc biến môi trường với giá trị mặc định
 SERVICE_NAME = os.getenv("SERVICE_NAME", "iot-ingestion")
 SERVICE_VERSION = os.getenv("SERVICE_VERSION", "0.5.0")
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "local-dev-token")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://lab05:lab05pass@localhost:5432/iotdb",
+)
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:9000")
 
 
 app = FastAPI(
@@ -84,7 +93,26 @@ class SensorReadingCreated(BaseModel):
     created_at: str
 
 
-READINGS: List[Dict] = []
+CREATE_READINGS_TABLE = """
+CREATE TABLE IF NOT EXISTS sensor_readings (
+    reading_id VARCHAR(32) PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    metric VARCHAR(32) NOT NULL,
+    value DOUBLE PRECISION NOT NULL,
+    unit VARCHAR(32),
+    measured_at VARCHAR(64) NOT NULL,
+    created_at VARCHAR(64) NOT NULL
+)
+"""
+
+
+def get_connection() -> psycopg.Connection:
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+
+def ensure_database() -> None:
+    with get_connection() as connection:
+        connection.execute(CREATE_READINGS_TABLE)
 
 
 def build_problem(
@@ -108,18 +136,23 @@ def build_problem(
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    try:
+        default_title = HTTPStatus(exc.status_code).phrase
+    except ValueError:
+        default_title = "HTTP Error"
+
     if isinstance(exc.detail, dict):
         problem = exc.detail
     else:
         problem = build_problem(
             status_code=exc.status_code,
-            title=status.HTTP_STATUS_CODES.get(exc.status_code, "HTTP Error"),
+            title=default_title,
             detail=str(exc.detail),
             instance=str(request.url.path),
         )
 
     problem.setdefault("status", exc.status_code)
-    problem.setdefault("title", status.HTTP_STATUS_CODES.get(exc.status_code, "HTTP Error"))
+    problem.setdefault("title", default_title)
     problem.setdefault("type", "about:blank")
     problem.setdefault("detail", "Request failed")
     problem.setdefault("instance", str(request.url.path))
@@ -185,11 +218,30 @@ def now_iso() -> str:
 
 def next_reading_id() -> str:
     today = datetime.now(timezone.utc).strftime("%Y%m%d")
-    return f"R-{today}-{len(READINGS) + 1:04d}"
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS total FROM sensor_readings"
+        ).fetchone()
+    return f"R-{today}-{row['total'] + 1:04d}"
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    try:
+        ensure_database()
+        response = requests.get(f"{AI_SERVICE_URL}/health", timeout=3)
+        response.raise_for_status()
+    except (psycopg.Error, requests.RequestException) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=build_problem(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                title="Service Unavailable",
+                detail=f"Dependency is not ready: {exc}",
+                instance="/health",
+            ),
+        ) from exc
+
     return HealthResponse(
         status="ok",
         service=SERVICE_NAME,
@@ -213,19 +265,40 @@ def create_reading(payload: SensorReadingCreate, response: Response) -> SensorRe
     if payload.metric == SensorMetric.temperature and payload.value >= 70:
         response.headers["X-Warning"] = "high-temperature"
 
-    reading_id = next_reading_id()
-    created_at = now_iso()
+    try:
+        ensure_database()
+        ai_response = requests.post(f"{AI_SERVICE_URL}/predict", timeout=3)
+        ai_response.raise_for_status()
 
-    item = {
-        "reading_id": reading_id,
-        "device_id": payload.device_id,
-        "metric": payload.metric.value,
-        "value": payload.value,
-        "unit": payload.unit.value if payload.unit else None,
-        "timestamp": payload.timestamp,
-        "created_at": created_at,
-    }
-    READINGS.append(item)
+        reading_id = next_reading_id()
+        created_at = now_iso()
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO sensor_readings (
+                    reading_id, device_id, metric, value, unit, measured_at, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    reading_id,
+                    payload.device_id,
+                    payload.metric.value,
+                    payload.value,
+                    payload.unit.value if payload.unit else None,
+                    payload.timestamp,
+                    created_at,
+                ),
+            )
+    except (psycopg.Error, requests.RequestException) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=build_problem(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                title="Service Unavailable",
+                detail=f"Could not reach a required dependency: {exc}",
+                instance="/readings",
+            ),
+        ) from exc
 
     return SensorReadingCreated(
         reading_id=reading_id,
@@ -241,19 +314,41 @@ def latest_readings(
     device_id: Optional[str] = Query(default=None),
     limit: int = Query(default=10, ge=1, le=100),
 ) -> Dict[str, List[Dict]]:
-    items = READINGS
-
+    ensure_database()
+    query = """
+        SELECT reading_id, device_id, metric, value, unit,
+               measured_at AS timestamp, created_at
+        FROM sensor_readings
+    """
+    params: List[object] = []
     if device_id:
-        items = [item for item in items if item["device_id"] == device_id]
+        query += " WHERE device_id = %s"
+        params.append(device_id)
+    query += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
 
-    return {"items": items[-limit:]}
+    with get_connection() as connection:
+        items = connection.execute(query, params).fetchall()
+
+    return {"items": list(reversed(items))}
 
 
 @app.get("/readings/{reading_id}", dependencies=[Depends(verify_bearer_token)])
 def get_reading(reading_id: str) -> Dict:
-    for item in READINGS:
-        if item["reading_id"] == reading_id:
-            return item
+    ensure_database()
+    with get_connection() as connection:
+        item = connection.execute(
+            """
+            SELECT reading_id, device_id, metric, value, unit,
+                   measured_at AS timestamp, created_at
+            FROM sensor_readings
+            WHERE reading_id = %s
+            """,
+            (reading_id,),
+        ).fetchone()
+
+    if item:
+        return item
 
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,

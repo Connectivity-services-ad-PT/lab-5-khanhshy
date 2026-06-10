@@ -16,7 +16,7 @@ cd FIT4110_lab05_docker_compose_readiness
 ## 2. Cài dependencies cho Newman/Prism/Spectral (tuỳ chọn)
 
 ```bash
-npm install
+npm ci
 ```
 
 ---
@@ -24,18 +24,21 @@ npm install
 ## 3. Build & chạy stack Docker Compose
 
 ```bash
-# Copy .env.example sang .env và chỉnh sửa nếu cần
+# Copy .env.example sang .env nếu muốn thay đổi giá trị mặc định
 cp .env.example .env
 
-# Build images (nếu chưa có) và khởi động các container trong nền
-docker compose up -d --build
+# Build images, khởi động container và chờ tất cả healthcheck pass
+docker compose up -d --build --wait
 ```
 
 Lệnh trên sẽ tạo các container:
 
 - `fit4110-db-lab05` (PostgreSQL)
-- `fit4110-ai-lab05` (AI service mẫu chạy port 9000)
+- `fit4110-ai-lab05` (AI service mẫu chạy non-root trên port 9000)
 - `fit4110-api-lab05` (API FastAPI trên port 8000)
+
+API dùng hostname nội bộ `db` và `ai-service`; endpoint `/health` chỉ trả `200`
+khi cả PostgreSQL và AI service đều sẵn sàng.
 
 Theo dõi log:
 
@@ -64,7 +67,7 @@ curl -X POST http://localhost:9000/predict
 
 ---
 
-## 4. Chạy Newman test trên stack Compose (tuỳ chọn)
+## 4. Chạy Newman test trên stack Compose
 
 ```bash
 npm run test:compose
@@ -76,6 +79,15 @@ Report sinh tại:
 reports/newman-lab05-compose.xml
 reports/newman-lab05-compose.html
 ```
+
+Khi commit được push lên nhánh `main`, GitHub Actions tự publish:
+
+```text
+ghcr.io/connectivity-services-ad-pt/iot-ingestion:v0.1.0-team-iot
+ghcr.io/connectivity-services-ad-pt/ai-service:v0.1.0-team-iot
+```
+
+Workflow dùng `GITHUB_TOKEN`, vì vậy không cần đăng nhập Docker Desktop.
 
 ---
 

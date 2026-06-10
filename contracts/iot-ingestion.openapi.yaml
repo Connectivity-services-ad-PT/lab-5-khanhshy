@@ -1,157 +1,110 @@
 openapi: 3.1.0
 info:
-  title: FIT4110 Lab 05 - IoT Ingestion API
-  version: 0.5.0
+  title: Smart Campus IoT Ingestion API
+  version: 1.0.0
   description: |
-    Contract dùng cho Lab 05 Docker Compose readiness, kế thừa logic của Lab 03/04.
-    Payload chính dùng các trường device_id, metric, value, unit và timestamp.
-    Boundary minh hoạ cho temperature là -40 đến 80.
+    API và event contract cho IoT Ingestion service.
+    REST paths dùng để ghi nhận, truy vấn và backfill dữ liệu IoT; hợp đồng chính của Pair-05 và Pair-06 là Queue async event.
+    Pair-05: IoT → Core Business (sensor events)
+    Pair-06: IoT → Analytics (telemetry events)
+  contact:
+    name: IoT Team
+    email: iot@campus.local
 servers:
   - url: http://localhost:8000
-    description: Local or Docker Compose API service
-  - url: http://localhost:4010
-    description: Prism mock server
+    description: Local development server
+  - url: https://iot.campus.local
+    description: IoT Ingestion service
 tags:
-  - name: system
-    description: Health and runtime information
-  - name: readings
-    description: Sensor telemetry ingestion
-
+  - name: health
+    description: Kiểm tra trạng thái service
+  - name: sensors
+    description: Quản lý sensor readings
+  - name: telemetry
+    description: Quản lý telemetry data
+  - name: devices
+    description: Quản lý device status
+  - name: Events
+    description: Truy vấn và backfill event IoT
+  - name: lab-readings
+    description: Endpoint runtime kế thừa từ Lab 04 và được kiểm thử trong Compose
 security:
   - bearerAuth: []
-
 paths:
   /health:
     get:
-      tags: [system]
       operationId: getHealth
       summary: Kiểm tra trạng thái service
-      description: Public health check dùng để kiểm tra container hoặc mock server đã sẵn sàng.
+      description: Endpoint kiểm tra IoT Ingestion service còn hoạt động.
+      tags: [health]
       security: []
       responses:
-        "200":
+        '200':
           description: Service đang hoạt động
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthResponse"
+                $ref: '#/components/schemas/HealthStatus'
               examples:
                 ok:
                   value:
                     status: ok
                     service: iot-ingestion
                     version: 0.5.0
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 
   /readings:
     post:
-      tags: [readings]
-      operationId: createReading
-      summary: Gửi một bản ghi cảm biến từ thiết bị IoT
-      description: |
-        Endpoint nhận telemetry từ ESP32 hoặc gateway.
-        Request phải có device_id, metric, value và timestamp.
-        Trong lab này, ví dụ boundary dùng nhiệt độ hợp lệ từ -40 đến 80.
+      operationId: createLabReading
+      summary: Gửi một sensor reading vào stack Lab 05
+      tags: [lab-readings]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SensorReadingCreate"
-            examples:
-              valid_temperature:
-                value:
-                  device_id: ESP32-LAB-A01
-                  metric: temperature
-                  value: 31.5
-                  unit: celsius
-                  timestamp: "2026-05-13T08:30:00+07:00"
-              boundary_high_temperature:
-                value:
-                  device_id: ESP32-LAB-A01
-                  metric: temperature
-                  value: 80
-                  unit: celsius
-                  timestamp: "2026-05-13T08:30:00+07:00"
+              $ref: '#/components/schemas/LabSensorReadingCreate'
       responses:
-        "201":
-          description: Đã ghi nhận bản đọc cảm biến
-          headers:
-            X-Warning:
-              description: Warning trả về khi reading được chấp nhận nhưng có rủi ro, ví dụ nhiệt độ cao.
-              schema:
-                type: string
+        '201':
+          description: Reading đã được AI service xử lý và lưu vào PostgreSQL
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SensorReadingCreated"
-              examples:
-                created:
-                  value:
-                    reading_id: R-20260513-0001
-                    device_id: ESP32-LAB-A01
-                    metric: temperature
-                    accepted: true
-                    created_at: "2026-05-13T08:30:01+07:00"
-        "401":
-          description: Thiếu hoặc sai token
+                $ref: '#/components/schemas/LabSensorReadingCreated'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          description: Database hoặc AI service chưa sẵn sàng
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
-              examples:
-                unauthorized:
-                  value:
-                    type: https://smart-campus.local/problems/unauthorized
-                    title: Unauthorized
-                    status: 401
-                    detail: Missing or invalid bearer token
-                    instance: /readings
-        "422":
-          description: Request không hợp lệ
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetails"
-              examples:
-                validation_error:
-                  value:
-                    type: https://smart-campus.local/problems/validation-error
-                    title: Validation error
-                    status: 422
-                    detail: body.value must be less than or equal to 80
-                    instance: /readings
-        "429":
-          description: Thiết bị gửi dữ liệu quá nhiều trong thời gian ngắn
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetails"
+                $ref: '#/components/schemas/Problem'
 
   /readings/latest:
     get:
-      tags: [readings]
-      operationId: getLatestReadings
-      summary: Lấy các bản ghi cảm biến mới nhất
-      description: Trả về danh sách bản ghi mới nhất, có thể lọc theo thiết bị và giới hạn số dòng.
+      operationId: getLatestLabReadings
+      summary: Lấy các reading mới nhất đã lưu trong PostgreSQL
+      tags: [lab-readings]
       parameters:
-        - in: query
-          name: device_id
+        - name: device_id
+          in: query
           required: false
           schema:
             type: string
-          example: ESP32-LAB-A01
-        - in: query
-          name: limit
+        - name: limit
+          in: query
           required: false
           schema:
             type: integer
             minimum: 1
             maximum: 100
             default: 10
-          example: 5
       responses:
-        "200":
-          description: Danh sách bản ghi mới nhất
+        '200':
+          description: Danh sách reading mới nhất
           content:
             application/json:
               schema:
@@ -161,161 +114,365 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: "#/components/schemas/SensorReading"
-              examples:
-                latest:
-                  value:
-                    items:
-                      - reading_id: R-20260513-0001
-                        device_id: ESP32-LAB-A01
-                        metric: temperature
-                        value: 31.5
-                        unit: celsius
-                        timestamp: "2026-05-13T08:30:00+07:00"
-                        created_at: "2026-05-13T08:30:01+07:00"
-        "401":
-          description: Thiếu hoặc sai token
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetails"
-        "422":
-          description: Query parameter không hợp lệ
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ProblemDetails"
+                      $ref: '#/components/schemas/LabSensorReading'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /readings/{reading_id}:
     get:
-      tags: [readings]
-      operationId: getReadingById
-      summary: Lấy chi tiết một bản ghi cảm biến
+      operationId: getLabReadingById
+      summary: Lấy một reading theo ID
+      tags: [lab-readings]
       parameters:
         - name: reading_id
           in: path
           required: true
           schema:
             type: string
-            pattern: "^R-[0-9]{8}-[0-9]{4}$"
-          example: R-20260513-0001
+            pattern: '^R-[0-9]{8}-[0-9]{4}$'
       responses:
-        "200":
-          description: Chi tiết bản ghi cảm biến
+        '200':
+          description: Chi tiết reading
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SensorReading"
-              examples:
-                reading:
-                  value:
-                    reading_id: R-20260513-0001
-                    device_id: ESP32-LAB-A01
-                    metric: temperature
-                    value: 31.5
-                    unit: celsius
-                    timestamp: "2026-05-13T08:30:00+07:00"
-                    created_at: "2026-05-13T08:30:01+07:00"
-        "401":
-          description: Thiếu hoặc sai token
+                $ref: '#/components/schemas/LabSensorReading'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sensors/readings:
+    get:
+      operationId: getSensorReadings
+      summary: Lấy danh sách sensor readings
+      description: Core Business và Analytics query sensor readings với filter.
+      tags: [sensors]
+      parameters:
+        - name: deviceId
+          in: query
+          required: false
+          description: Filter theo device ID
+          schema:
+            type: string
+            pattern: '^[A-Z0-9-]+$'
+            example: SENSOR-001
+        - name: sensorType
+          in: query
+          required: false
+          description: Filter theo loại sensor
+          schema:
+            type: string
+            enum: [temperature, humidity, motion, smoke]
+        - name: from
+          in: query
+          required: false
+          description: Thời điểm bắt đầu (ISO8601)
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Thời điểm kết thúc (ISO8601)
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Danh sách sensor readings
           content:
-            application/problem+json:
+            application/json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
-        "404":
-          description: Không tìm thấy bản ghi
+                $ref: '#/components/schemas/SensorReadingList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      operationId: createSensorReading
+      summary: Gửi sensor reading mới
+      description: IoT devices gửi sensor reading vào hệ thống.
+      tags: [sensors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSensorReadingRequest'
+            examples:
+              temperature:
+                value:
+                  deviceId: SENSOR-001
+                  sensorType: temperature
+                  value: 38.5
+                  unit: celsius
+                  timestamp: '2026-05-12T10:30:00Z'
+                  locationId: ZONE-A-01
+      responses:
+        '201':
+          description: Sensor reading đã được ghi nhận
           content:
-            application/problem+json:
+            application/json:
               schema:
-                $ref: "#/components/schemas/ProblemDetails"
-              examples:
-                not_found:
-                  value:
-                    type: https://smart-campus.local/problems/not-found
-                    title: Not Found
-                    status: 404
-                    detail: Reading R-20260513-9999 does not exist
-                    instance: /readings/R-20260513-9999
+                $ref: '#/components/schemas/SensorReading'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /sensors/threshold-exceeded:
+    get:
+      operationId: getThresholdExceededEvents
+      summary: Lấy danh sách threshold exceeded events
+      description: Core Business query các event vượt ngưỡng để xử lý policy.
+      tags: [sensors]
+      parameters:
+        - name: severity
+          in: query
+          required: false
+          description: Filter theo mức độ nghiêm trọng
+          schema:
+            type: string
+            enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Danh sách threshold exceeded events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThresholdExceededList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /telemetry:
+    get:
+      operationId: getTelemetry
+      summary: Lấy telemetry data
+      description: Analytics query telemetry để aggregate theo giờ/ngày.
+      tags: [telemetry]
+      parameters:
+        - name: deviceId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z0-9-]+$'
+        - name: zoneId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z0-9-]+$'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Danh sách telemetry data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /devices/{deviceId}/status:
+    get:
+      operationId: getDeviceStatus
+      summary: Lấy trạng thái device
+      description: Analytics query trạng thái device (online/offline).
+      tags: [devices]
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9-]+$'
+      responses:
+        '200':
+          description: Trạng thái device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /events:
+    get:
+      operationId: getIoTEvents
+      summary: Lấy danh sách IoT events
+      description: Endpoint truy vấn và backfill các event IoT theo union schema `IoTEvent`.
+      tags: [Events]
+      parameters:
+        - name: eventType
+          in: query
+          required: false
+          description: Filter theo loại event
+          schema:
+            type: string
+            enum:
+              - sensor.reading.created
+              - sensor.threshold.exceeded
+              - telemetry.ingested
+              - device.status.changed
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Danh sách IoT events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoTEventList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+webhooks:
+  sensorReadingCreated:
+    post:
+      operationId: onSensorReadingCreated
+      summary: Webhook khi có sensor reading mới
+      description: IoT Ingestion gửi event cho Core Business khi có sensor reading mới.
+      tags: [sensors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SensorReadingEvent'
+      responses:
+        '200':
+          description: Consumer đã nhận event
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  thresholdExceeded:
+    post:
+      operationId: onThresholdExceeded
+      summary: Webhook khi sensor vượt ngưỡng
+      description: IoT Ingestion gửi event cho Core Business khi sensor vượt ngưỡng.
+      tags: [sensors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ThresholdExceededEvent'
+      responses:
+        '200':
+          description: Consumer đã nhận event
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  telemetryIngested:
+    post:
+      operationId: onTelemetryIngested
+      summary: Webhook khi có telemetry mới
+      description: IoT Ingestion gửi event cho Analytics khi có telemetry mới.
+      tags: [telemetry]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelemetryEvent'
+      responses:
+        '200':
+          description: Consumer đã nhận event
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  deviceStatusChanged:
+    post:
+      operationId: onDeviceStatusChanged
+      summary: Webhook khi device status thay đổi
+      description: IoT Ingestion gửi event cho Analytics khi device status thay đổi.
+      tags: [devices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceStatusEvent'
+      responses:
+        '200':
+          description: Consumer đã nhận event
+        '400':
+          $ref: '#/components/responses/BadRequest'
 
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: token
+      bearerFormat: JWT
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Số item tối đa mỗi trang
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Cursor của trang tiếp theo, lấy từ `nextCursor` trong response trước đó
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+        example: eyJsYXN0SWQiOiJTRU5TT1ItMDAxIn0
 
   schemas:
-    SensorMetric:
-      type: string
-      enum: [temperature, humidity, motion, smoke]
-
-    SensorUnit:
-      type: string
-      enum: [celsius, percent, boolean, ppm]
-
-    SensorReadingCreate:
+    HealthStatus:
       type: object
-      required: [device_id, metric, value, timestamp]
-      properties:
-        device_id:
-          type: string
-          minLength: 3
-          example: ESP32-LAB-A01
-        metric:
-          $ref: "#/components/schemas/SensorMetric"
-        value:
-          type: number
-          minimum: -40
-          maximum: 80
-          description: |
-            Giá trị mẫu dùng cho boundary test trong Lab 03 và Lab 04.
-            Với metric=temperature, miền hợp lệ minh họa là -40 đến 80.
-          example: 31.5
-        unit:
-          $ref: "#/components/schemas/SensorUnit"
-        timestamp:
-          type: string
-          format: date-time
-          example: "2026-05-13T08:30:00+07:00"
-
-    SensorReading:
-      allOf:
-        - $ref: "#/components/schemas/SensorReadingCreate"
-        - type: object
-          required: [reading_id, created_at]
-          properties:
-            reading_id:
-              type: string
-              pattern: "^R-[0-9]{8}-[0-9]{4}$"
-              example: R-20260513-0001
-            created_at:
-              type: string
-              format: date-time
-              example: "2026-05-13T08:30:01+07:00"
-
-    SensorReadingCreated:
-      type: object
-      required: [reading_id, device_id, metric, accepted, created_at]
-      properties:
-        reading_id:
-          type: string
-          pattern: "^R-[0-9]{8}-[0-9]{4}$"
-          example: R-20260513-0001
-        device_id:
-          type: string
-          example: ESP32-LAB-A01
-        metric:
-          $ref: "#/components/schemas/SensorMetric"
-        accepted:
-          type: boolean
-          example: true
-        created_at:
-          type: string
-          format: date-time
-          example: "2026-05-13T08:30:01+07:00"
-
-    HealthResponse:
-      type: object
+      additionalProperties: false
       required: [status, service, version]
       properties:
         status:
@@ -329,24 +486,557 @@ components:
           type: string
           example: 0.5.0
 
-    ProblemDetails:
+    LabSensorReadingCreate:
       type: object
-      required: [type, title, status, detail]
+      additionalProperties: false
+      required: [device_id, metric, value, timestamp]
+      properties:
+        device_id:
+          type: string
+          minLength: 3
+          example: ESP32-LAB-A01
+        metric:
+          type: string
+          enum: [temperature, humidity, motion, smoke]
+        value:
+          type: number
+          minimum: -40
+          maximum: 80
+          example: 31.5
+        unit:
+          type: string
+          enum: [celsius, percent, boolean, ppm]
+        timestamp:
+          type: string
+          format: date-time
+
+    LabSensorReading:
+      allOf:
+        - $ref: '#/components/schemas/LabSensorReadingCreate'
+        - type: object
+          required: [reading_id, created_at]
+          properties:
+            reading_id:
+              type: string
+              pattern: '^R-[0-9]{8}-[0-9]{4}$'
+            created_at:
+              type: string
+              format: date-time
+
+    LabSensorReadingCreated:
+      type: object
+      additionalProperties: false
+      required: [reading_id, device_id, metric, accepted, created_at]
+      properties:
+        reading_id:
+          type: string
+          pattern: '^R-[0-9]{8}-[0-9]{4}$'
+        device_id:
+          type: string
+        metric:
+          type: string
+          enum: [temperature, humidity, motion, smoke]
+        accepted:
+          type: boolean
+          const: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateSensorReadingRequest:
+      type: object
+      additionalProperties: false
+      required: [deviceId, sensorType, value, unit, timestamp]
+      properties:
+        deviceId:
+          type: string
+          pattern: '^[A-Z0-9-]+$'
+          description: Mã thiết bị sensor
+          example: SENSOR-001
+        sensorType:
+          type: string
+          enum: [temperature, humidity, motion, smoke]
+          description: Loại sensor
+          example: temperature
+        value:
+          type: number
+          minimum: -100
+          maximum: 1000
+          description: Giá trị đo được
+          example: 38.5
+        unit:
+          type: string
+          enum: [celsius, percent, boolean, ppm]
+          minLength: 1
+          maxLength: 20
+          description: Đơn vị đo (celsius, %, boolean)
+          example: celsius
+        timestamp:
+          type: string
+          format: date-time
+          description: Thời điểm đo
+          example: '2026-05-12T10:30:00Z'
+        locationId:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: Vị trí sensor (optional)
+          example: ZONE-A-01
+        correlationId:
+          anyOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+          description: ID để trace request (optional)
+
+    SensorReading:
+      allOf:
+        - $ref: '#/components/schemas/CreateSensorReadingRequest'
+        - type: object
+          additionalProperties: false
+          required: [id, createdAt]
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: UUID của sensor reading
+              example: 0196fb3d-4ad7-7d1e-9f49-5d5148d2babc
+            createdAt:
+              type: string
+              format: date-time
+              description: Thời điểm ghi nhận vào hệ thống
+              example: '2026-05-12T10:30:01Z'
+
+    SensorReadingList:
+      type: object
+      additionalProperties: false
+      required: [items, total, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SensorReading'
+        total:
+          type: integer
+          minimum: 0
+          description: Tổng số records
+        nextCursor:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: Cursor để lấy trang tiếp theo, null nếu đã hết dữ liệu
+          example: eyJsYXN0SWQiOiIwMTk2ZmIzZCJ9
+
+    SensorReadingEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, eventType, timestamp, source, data]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUID của event, Consumer dùng làm idempotency key khi Provider retry hoặc publish lại
+          example: 0196fb3d-4ad7-7d1e-9f49-5d5148d2babc
+        eventType:
+          type: string
+          const: sensor.reading.created
+          example: sensor.reading.created
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-05-12T10:30:00Z'
+        source:
+          type: string
+          example: iot-ingestion
+        data:
+          $ref: '#/components/schemas/SensorReading'
+
+    ThresholdExceededEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, eventType, timestamp, source, data]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUID của event, Consumer dùng làm idempotency key khi Provider retry hoặc publish lại
+        eventType:
+          type: string
+          const: sensor.threshold.exceeded
+          example: sensor.threshold.exceeded
+        timestamp:
+          type: string
+          format: date-time
+        source:
+          type: string
+          example: iot-ingestion
+        data:
+          type: object
+          additionalProperties: false
+          required: [deviceId, sensorType, value, threshold, timestamp]
+          properties:
+            deviceId:
+              type: string
+              example: SENSOR-001
+            sensorType:
+              type: string
+              enum: [temperature, humidity, motion, smoke]
+            value:
+              type: number
+              example: 45.0
+            threshold:
+              type: number
+              example: 40.0
+            unit:
+              anyOf:
+                - type: string
+                  enum: [celsius, percent, boolean, ppm]
+                  minLength: 1
+                  maxLength: 20
+                - type: 'null'
+              description: Đơn vị đo dùng để diễn giải value và threshold, gửi khi Provider có dữ liệu
+              example: celsius
+            timestamp:
+              type: string
+              format: date-time
+            severity:
+              anyOf:
+                - type: string
+                  enum: [LOW, MEDIUM, HIGH, CRITICAL]
+                - type: 'null'
+              example: HIGH
+            locationId:
+              anyOf:
+                - type: string
+                - type: 'null'
+              example: ZONE-A-01
+
+    ThresholdExceededList:
+      type: object
+      additionalProperties: false
+      required: [items, total, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ThresholdExceededEvent'
+        total:
+          type: integer
+          minimum: 0
+        nextCursor:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: Cursor để lấy trang tiếp theo, null nếu đã hết dữ liệu
+          example: eyJsYXN0RXZlbnRJZCI6IjAxOTYifQ
+
+    TelemetryEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, eventType, timestamp, source, data]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUID của event, phải giữ nguyên nếu Provider retry hoặc publish lại cùng một business event
+        eventType:
+          type: string
+          const: telemetry.ingested
+          example: telemetry.ingested
+        timestamp:
+          type: string
+          format: date-time
+        source:
+          type: string
+          example: iot-ingestion
+        data:
+          type: object
+          additionalProperties: false
+          required: [deviceId, sensorType, value, unit, timestamp]
+          properties:
+            deviceId:
+              type: string
+              example: SENSOR-001
+            sensorType:
+              type: string
+              enum: [temperature, humidity, motion, smoke]
+              example: temperature
+            value:
+              type: number
+              example: 38.5
+            unit:
+              type: string
+              enum: [celsius, percent, boolean, ppm]
+              example: celsius
+            timestamp:
+              type: string
+              format: date-time
+              description: Thời điểm telemetry theo ISO 8601 UTC
+            zoneId:
+              anyOf:
+                - type: string
+                - type: 'null'
+              description: Khu vực của thiết bị; nếu không có, Analytics fallback vào nhóm unknown_zone
+              example: ZONE-A
+            batchId:
+              anyOf:
+                - type: string
+                - type: 'null'
+              description: ID để group events
+              example: BATCH-2026-05-12-001
+
+    TelemetryList:
+      type: object
+      additionalProperties: false
+      required: [items, total, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelemetryEvent'
+        total:
+          type: integer
+          minimum: 0
+        nextCursor:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: Cursor để lấy trang tiếp theo, null nếu đã hết dữ liệu
+          example: eyJiYXRjaElkIjoiQkFUQ0gtMjAyNiJ9
+
+    IoTEvent:
+      oneOf:
+        - $ref: '#/components/schemas/SensorReadingEvent'
+        - $ref: '#/components/schemas/ThresholdExceededEvent'
+        - $ref: '#/components/schemas/TelemetryEvent'
+        - $ref: '#/components/schemas/DeviceStatusEvent'
+      discriminator:
+        propertyName: eventType
+        mapping:
+          sensor.reading.created: '#/components/schemas/SensorReadingEvent'
+          sensor.threshold.exceeded: '#/components/schemas/ThresholdExceededEvent'
+          telemetry.ingested: '#/components/schemas/TelemetryEvent'
+          device.status.changed: '#/components/schemas/DeviceStatusEvent'
+      description: Union schema cho các event IoT dùng discriminator `eventType`
+
+    IoTEventList:
+      type: object
+      additionalProperties: false
+      required: [items, total, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IoTEvent'
+        total:
+          type: integer
+          minimum: 0
+        nextCursor:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: Cursor để lấy trang tiếp theo, null nếu đã hết dữ liệu
+          example: eyJsYXN0RXZlbnRJZCI6IjAxOTYifQ
+
+    DeviceStatus:
+      type: object
+      additionalProperties: false
+      required: [deviceId, status, timestamp]
+      properties:
+        deviceId:
+          type: string
+          example: SENSOR-001
+        status:
+          type: string
+          enum: [online, offline, maintenance]
+          example: online
+        timestamp:
+          type: string
+          format: date-time
+          description: Thời điểm cập nhật status theo ISO 8601 UTC
+        previousStatus:
+          anyOf:
+            - type: string
+              enum: [online, offline, maintenance]
+            - type: 'null'
+          example: null
+        reason:
+          anyOf:
+            - type: string
+            - type: 'null'
+          description: Lý do thay đổi status
+          example: null
+
+    DeviceStatusEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, eventType, timestamp, source, data]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: UUID của event, phải giữ nguyên nếu Provider retry hoặc publish lại cùng một business event
+        eventType:
+          type: string
+          const: device.status.changed
+          example: device.status.changed
+        timestamp:
+          type: string
+          format: date-time
+        source:
+          type: string
+          example: iot-ingestion
+        data:
+          $ref: '#/components/schemas/DeviceStatus'
+
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status]
       properties:
         type:
           type: string
-          example: https://smart-campus.local/problems/validation-error
+          format: uri
+          description: URI định danh loại lỗi
+          example: https://iot.campus.local/errors/validation
         title:
           type: string
-          example: Validation error
+          minLength: 3
+          maxLength: 120
+          description: Tiêu đề lỗi ngắn gọn
+          example: Dữ liệu không hợp lệ
         status:
           type: integer
           minimum: 400
           maximum: 599
-          example: 422
+          description: HTTP status code
+          example: 400
         detail:
-          type: string
-          example: body.value must be less than or equal to 80
+          anyOf:
+            - type: string
+              maxLength: 500
+            - type: 'null'
+          description: Mô tả chi tiết lỗi
+          example: Field deviceId không đúng định dạng
         instance:
-          type: string
-          example: /readings
+          anyOf:
+            - type: string
+              format: uri
+            - type: 'null'
+          description: URI của request gây lỗi
+          example: https://iot.campus.local/sensors/readings
+        errors:
+          type: array
+          minItems: 0
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, code, message]
+            properties:
+              field:
+                type: string
+                minLength: 1
+                maxLength: 80
+                example: deviceId
+              code:
+                type: string
+                minLength: 2
+                maxLength: 80
+                example: PATTERN_MISMATCH
+              message:
+                type: string
+                minLength: 3
+                maxLength: 200
+                example: deviceId phải có dạng [A-Z0-9-]+
+
+  responses:
+    BadRequest:
+      description: Dữ liệu sai định dạng
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://iot.campus.local/errors/validation
+            title: Dữ liệu không hợp lệ
+            status: 400
+            detail: Payload không đúng JSON Schema
+            instance: https://iot.campus.local/sensors/readings
+            errors:
+              - field: sensorType
+                code: ENUM_MISMATCH
+                message: sensorType không nằm trong danh sách cho phép
+
+    Unauthorized:
+      description: Thiếu hoặc sai thông tin xác thực
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://iot.campus.local/errors/unauthorized
+            title: Chưa xác thực
+            status: 401
+            detail: Thiếu Bearer token
+            instance: https://iot.campus.local/sensors/readings
+            errors: []
+
+    NotFound:
+      description: Resource không tồn tại
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://iot.campus.local/errors/not-found
+            title: Không tìm thấy
+            status: 404
+            detail: Device không tồn tại
+            instance: https://iot.campus.local/devices/SENSOR-999/status
+            errors: []
+
+    UnprocessableEntity:
+      description: Payload đúng định dạng nhưng không hợp lệ về nghiệp vụ
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://iot.campus.local/errors/business-rule
+            title: Dữ liệu không hợp lệ về nghiệp vụ
+            status: 422
+            detail: timestamp của sensor reading nằm ngoài khoảng thời gian cho phép
+            instance: https://iot.campus.local/sensors/readings
+            errors:
+              - field: timestamp
+                code: OUT_OF_RANGE
+                message: timestamp không được lớn hơn thời điểm hiện tại quá 1 phút
+
+    TooManyRequests:
+      description: Quá nhiều request trong một khoảng thời gian ngắn
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://iot.campus.local/errors/rate-limit
+            title: Quá nhiều request
+            status: 429
+            detail: Vui lòng thử lại sau khi hết thời gian giới hạn tần suất
+            instance: https://iot.campus.local/sensors/readings
+            errors: []
+
+    InternalServerError:
+      description: Lỗi không mong muốn phía server
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://iot.campus.local/errors/internal
+            title: Lỗi hệ thống
+            status: 500
+            detail: IoT Ingestion tạm thời không xử lý được request
+            instance: https://iot.campus.local/sensors/readings
+            errors: []

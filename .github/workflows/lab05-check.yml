@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   compose-check:
     name: Validate Docker Compose Stack
@@ -23,8 +27,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Newman + HTML reporter
-        run: npm install -g newman newman-reporter-htmlextra
+      - name: Install Node dependencies
+        run: npm ci
 
       # 3. Tạo .env từ .env.example (không dùng secret thật)
       - name: Create .env from example
@@ -80,7 +84,7 @@ jobs:
           echo "Collection: $COLLECTION"
           [ -n "$ENVIRONMENT" ] && echo "Environment: $ENVIRONMENT"
 
-          newman run "$COLLECTION" \
+          npx newman run "$COLLECTION" \
             ${ENVIRONMENT:+-e "$ENVIRONMENT"} \
             -r cli,junit,htmlextra \
             --reporter-junit-export reports/newman-lab05-compose.xml \
@@ -96,12 +100,10 @@ jobs:
           fi
 
           TOTAL=$(grep -cE '^[[:space:]]*-[[:space:]]*\[[ xX]\]' "$CHECKLIST" || true)
-          CHECKED=$(grep -cE '^[[:space:]]*-[[:space:]]*\[[xX]\]' "$CHECKLIST" || true)
+          echo "Readiness checklist contains ${TOTAL:-0} items"
 
-          echo "Readiness checklist: ${CHECKED:-0}/${TOTAL:-0} mục đã tick"
-
-          if [ "${CHECKED:-0}" -lt 6 ]; then
-            echo "::error::Lab yêu cầu tối thiểu 6 mục readiness, hiện có ${CHECKED:-0}"
+          if [ "${TOTAL:-0}" -lt 6 ]; then
+            echo "::error::Readiness checklist must contain at least 6 items"
             exit 1
           fi
 
@@ -118,6 +120,30 @@ jobs:
       - name: Dump Compose logs on failure
         if: failure()
         run: docker compose logs
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push images to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          API_IMAGE="ghcr.io/${OWNER}/iot-ingestion:v0.1.0-team-iot"
+          AI_IMAGE="ghcr.io/${OWNER}/ai-service:v0.1.0-team-iot"
+
+          docker tag fit4110/iot-ingestion:v0.1.0-team-iot "$API_IMAGE"
+          docker tag fit4110/ai-service:v0.1.0-team-iot "$AI_IMAGE"
+          docker push "$API_IMAGE"
+          docker push "$AI_IMAGE"
+
+          echo "Published $API_IMAGE"
+          echo "Published $AI_IMAGE"
 
       # 11. Cleanup
       - name: Tear down Compose stack

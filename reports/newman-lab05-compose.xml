@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="FIT4110 Lab 05 Compose" tests="5" time="0.103">
+  <testsuite name="API health includes dependency readiness" id="946503e0-e58d-4bbf-9903-63b4593855e7" timestamp="2026-06-10T03:31:43.589Z" tests="2" failures="0" errors="0" time="0.036">
+    <testcase name="status is 200" time="0.036" classname="ApiHealthIncludesDependencyReadiness"/>
+    <testcase name="service is ready" time="0.036" classname="ApiHealthIncludesDependencyReadiness"/>
+  </testsuite>
+  <testsuite name="Protected endpoint rejects a missing token" id="7be4d2f4-d59a-4886-92af-b37a220a8bc0" timestamp="2026-06-10T03:31:43.589Z" tests="2" failures="0" errors="0" time="0.006">
+    <testcase name="status is 401" time="0.006" classname="ProtectedEndpointRejectsAMissingToken"/>
+    <testcase name="problem+json response" time="0.006" classname="ProtectedEndpointRejectsAMissingToken"/>
+  </testsuite>
+  <testsuite name="Create a sensor reading through API, AI and DB" id="39f6e924-3946-4fe1-99d2-213b7b2d3132" timestamp="2026-06-10T03:31:43.589Z" tests="1" failures="0" errors="0" time="0.033">
+    <testcase name="status is 201" time="0.033" classname="CreateASensorReadingThroughApiAiAndDb"/>
+  </testsuite>
+  <testsuite name="Read the persisted sensor reading" id="bfe923b1-c029-4138-927d-e07a9cfe9793" timestamp="2026-06-10T03:31:43.589Z" tests="2" failures="0" errors="0" time="0.019">
+    <testcase name="status is 200" time="0.019" classname="ReadThePersistedSensorReading"/>
+    <testcase name="reading came from persistence" time="0.019" classname="ReadThePersistedSensorReading"/>
+  </testsuite>
+  <testsuite name="AI service health" id="321ea3f2-15c9-4dc5-a0b2-b55ca74b34f2" timestamp="2026-06-10T03:31:43.589Z" tests="2" failures="0" errors="0" time="0.009">
+    <testcase name="status is 200" time="0.009" classname="AiServiceHealth"/>
+    <testcase name="AI service is ready" time="0.009" classname="AiServiceHealth"/>
+  </testsuite>
+</testsuites>

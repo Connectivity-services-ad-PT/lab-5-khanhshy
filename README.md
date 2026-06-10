@@ -101,7 +101,7 @@ Trước khi chạy compose, hãy cài:
 Sau khi clone, cài dependencies phục vụ Prism, Spectral và Newman (tùy chọn):
 
 ```bash
-npm install
+npm ci
 ```
 
 Kiểm tra phiên bản:
@@ -142,7 +142,7 @@ File `docker-compose.yml` định nghĩa 3 service: `api`, `db` và `ai-service`
 Chạy compose (build & run):
 
 ```bash
-docker compose up -d --build
+docker compose up -d --build --wait
 ```
 
 Compose sẽ kéo hoặc build image, tạo mạng `team-internal`, gắn volume DB và khởi động lần lượt `db` → `ai-service` → `api`. Bạn có thể theo dõi log:
@@ -188,7 +188,7 @@ Makefile cung cấp các lệnh tiện lợi:
 make compose-up      # build và chạy compose stack
 make compose-down    # stop và remove stack
 make logs            # theo dõi log của các service
-make test-compose    # chạy newman test trên compose (tùy chọn)
+make test-compose    # chạy Newman end-to-end và tạo report XML/HTML
 ```
 
 Bạn có thể mở Makefile để chỉnh sửa thêm các mục.

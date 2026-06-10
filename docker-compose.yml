@@ -1,14 +1,17 @@
-version: "3.8"
-
 services:
   # Service API FastAPI
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    image: fit4110/iot-ingestion:${IMAGE_TAG:-v0.1.0-team-iot}
     container_name: fit4110-api-lab05
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lab05}:${POSTGRES_PASSWORD:-lab05pass}@db:5432/${POSTGRES_DB:-iotdb}
+      AI_SERVICE_URL: http://ai-service:9000
     depends_on:
       db:
         condition: service_healthy
@@ -20,11 +23,11 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 15s
 
   # PostgreSQL database service
   db:
@@ -39,33 +42,36 @@ services:
     networks:
       - team-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lab05}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lab05} -d ${POSTGRES_DB:-iotdb}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # AI service mẫu dùng Python HTTP server hoặc FastAPI
   ai-service:
-    image: python:3.11-slim
+    build:
+      context: ./src/ai_service
+      dockerfile: Dockerfile
+    image: fit4110/ai-service:${IMAGE_TAG:-v0.1.0-team-iot}
     container_name: fit4110-ai-lab05
-    working_dir: /service
-    volumes:
-      - ./src/ai_service:/service
-    command: ["python", "main.py"]
+    environment:
+      SERVICE_VERSION: ${SERVICE_VERSION:-0.5.0}
     networks:
       - team-internal
+    ports:
+      - "${AI_PORT:-9000}:9000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import requests; import sys; sys.exit(0) if requests.get('http://localhost:9000/health').status_code == 200 else sys.exit(1)\""]
-      interval: 30s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3).read()"]
+      interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
       start_period: 10s
 
 networks:
   team-internal:
     driver: bridge
   class-net:
-    external: true
+    driver: bridge
 
 volumes:
   db-data:
